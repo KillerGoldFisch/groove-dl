@@ -7,9 +7,10 @@ import random
 import string
 import sys
 import os
-import subprocess
 import gzip
 import threading
+import urllib
+import urllib2
 if sys.version_info[1] >= 6:  import json
 else: import simplejson as json
 
@@ -220,15 +221,21 @@ if __name__ == "__main__":
         if stream == []:
             print "Failed"
             exit()
-        cmd = 'wget --post-data=streamKey=%s -O "%s - %s.mp3" "http://%s/stream.php"' % (stream["streamKey"], s[songid]["ArtistName"], s[songid]["SongName"], stream["ip"]) #Run wget to download the song
-        p = subprocess.Popen(cmd, shell=True)
         markTimer = threading.Timer(30 + random.randint(0,5), markStreamKeyOver30Seconds, [s[songid]["SongID"], str(queueID), stream["ip"], stream["streamKey"]]) #Starts a timer that reports the song as being played for over 30-35 seconds. May not be needed.
         markTimer.start()
         try:
-            p.wait() #Wait for wget to finish
+            # Name of the target mp3-file
+            filename = "%s - %s.mp3"%(s[songid]["ArtistName"], s[songid]["SongName"])
+            data={'streamKey':stream["streamKey"]}
+            data = urllib.urlencode(data)
+            req = urllib2.Request('http://%s/stream.php'%(stream["ip"]), data)
+            response = urllib2.urlopen(req)
+            # responce to mp3-file
+            with open(filename, 'wb') as file:
+                file.write(response.read())
         except KeyboardInterrupt: #If we are interrupted by the user
-            os.remove('%s - %s.mp3' % (s[songid]["ArtistName"], s[songid]["SongName"])) #Delete the song
-            print "\nDownload cancelled. File deleted."
+           os.remove('%s - %s.mp3' % (s[songid]["ArtistName"], s[songid]["SongName"])) #Delete the song
+           print "\nDownload cancelled. File deleted."
         markTimer.cancel()
         print "Marking song as completed"
         markSongDownloadedEx(stream["ip"], s[songid]["SongID"], stream["streamKey"]) #This is the important part, hopefully this will stop grooveshark from banning us.
