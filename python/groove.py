@@ -186,6 +186,51 @@ def markSongDownloadedEx(streamServer, songID, streamKey):
     conn.request("POST", "/more.php?" + p["method"], json.JSONEncoder().encode(p), jsqueue[3])
     return json.JSONDecoder().decode(gzip.GzipFile(fileobj=(StringIO.StringIO(conn.getresponse().read()))).read())["result"]
 
+
+def downloadSong(s, filename, report_hook = None):
+    print "Retrieving stream key.."
+    stream = getStreamKeyFromSongIDs(s["SongID"]) #Get the StreamKey for the selected song
+    for k,v in stream.iteritems():
+        stream=v
+    if stream == []:
+        print "Failed"
+        exit()
+    try:
+        data={'streamKey':stream["streamKey"]}
+        data = urllib.urlencode(data)
+        req = urllib2.Request('http://%s/stream.php'%(stream["ip"]), data)
+        response = urllib2.urlopen(req)
+
+        def chunk_read(response, chunk_size=8192, report_hook=None):
+            total_size = response.info().getheader('Content-Length').strip()
+            total_size = int(total_size)
+            bytes_so_far = 0
+
+            data = ""
+
+            while 1:
+                chunk = response.read(chunk_size)
+                bytes_so_far += len(chunk)
+
+                data += chunk
+
+                if not chunk:
+                    break
+
+                if report_hook:
+                    report_hook(bytes_so_far, chunk_size, total_size)
+
+            return bytes_so_far, data
+
+        # responce to mp3-file
+        data = chunk_read(response, report_hook=report_hook)[1]
+        with open(filename, 'wb') as file:
+            file.write(data)
+    except KeyboardInterrupt: #If we are interrupted by the user
+       os.remove(filename) #Delete the song
+       print "\nDownload cancelled. File deleted."
+    markSongDownloadedEx(stream["ip"], s["SongID"], stream["streamKey"]) #This is the important part, hopefully this will stop grooveshark from banning us.
+
 if __name__ == "__main__":
     if len(sys.argv) < 2: #Check if we were passed any parameters
         import gui
@@ -209,34 +254,20 @@ if __name__ == "__main__":
     if songid == "" or songid == "q": exit() #Exit if choice is empty or q
     inputtedIDs=songid.split(',')
 
+    def chunk_report(bytes_so_far, chunk_size, total_size):
+        percent = float(bytes_so_far) / total_size
+        percent = round(percent*100, 2)
+        sys.stdout.write("Downloaded %d of %d bytes (%0.2f%%)\r" % 
+            (bytes_so_far, total_size, percent))
+
+        if bytes_so_far >= total_size:
+            sys.stdout.write('\n')
+
     #songid = eval(songid)-1 #Turn it into an int and subtract one to fit it into the list index
     queueID = getQueueID()
     for curID in inputtedIDs:
         songid=eval(curID)-1
-        addSongsToQueue(s[songid], queueID) #Add the song to the queue
-        print "Retrieving stream key.."
-        stream = getStreamKeyFromSongIDs(s[songid]["SongID"]) #Get the StreamKey for the selected song
-        for k,v in stream.iteritems():
-            stream=v
-        if stream == []:
-            print "Failed"
-            exit()
-        markTimer = threading.Timer(30 + random.randint(0,5), markStreamKeyOver30Seconds, [s[songid]["SongID"], str(queueID), stream["ip"], stream["streamKey"]]) #Starts a timer that reports the song as being played for over 30-35 seconds. May not be needed.
-        markTimer.start()
-        try:
-            # Name of the target mp3-file
-            filename = "%s - %s.mp3"%(s[songid]["ArtistName"], s[songid]["SongName"])
-            data={'streamKey':stream["streamKey"]}
-            data = urllib.urlencode(data)
-            req = urllib2.Request('http://%s/stream.php'%(stream["ip"]), data)
-            response = urllib2.urlopen(req)
-            # responce to mp3-file
-            with open(filename, 'wb') as file:
-                file.write(response.read())
-        except KeyboardInterrupt: #If we are interrupted by the user
-           os.remove('%s - %s.mp3' % (s[songid]["ArtistName"], s[songid]["SongName"])) #Delete the song
-           print "\nDownload cancelled. File deleted."
-        markTimer.cancel()
+        filename = "%s - %s.mp3"%(s[songid]["ArtistName"], s[songid]["SongName"])
+        downloadSong(s[songid], filename, report_hook=chunk_report)
         print "Marking song as completed"
-        markSongDownloadedEx(stream["ip"], s[songid]["SongID"], stream["streamKey"]) #This is the important part, hopefully this will stop grooveshark from banning us.
-        #Natural Exit
+
